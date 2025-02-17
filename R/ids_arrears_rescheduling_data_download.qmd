@@ -1,0 +1,132 @@
+---
+title: "Downloading IDS Arrears & Rescheduling Data"
+author: "Teal Emery"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(wbids)
+library(here)
+```
+
+```{r}
+debt_series <- tibble(
+  series_id = c(
+    # Arrears
+    "DT.AXA.OFFT.CD", "DT.AXA.PRVT.CD",  # Principal arrears
+    "DT.IXA.OFFT.CD", "DT.IXA.PRVT.CD",   # Interest arrears
+    "DT.IXA.DPPG.CD.CG",                   # Net change in interest arrears
+    
+    # Rescheduling
+    "DT.AXR.DPPG.CD", "DT.AXR.OFFT.CD", "DT.AXR.PRVT.CD",  # Principal
+    "DT.IXR.DPPG.CD", "DT.IXR.OFFT.CD", "DT.IXR.PRVT.CD",  # Interest
+    "DT.TXR.DPPG.CD", "DT.DXR.DPPG.CD",                     # Combined
+    
+    # Forgiveness
+    "DT.AXF.DPPG.CD",                      # Principal forgiveness
+    "DT.IXF.DPPG.CD",                      # Interest forgiveness
+    "DT.DFR.DPPG.CD", "DT.DSF.DPPG.CD",   # Total forgiveness/reduction
+    "DT.DOD.MDRI.CD",                      # MDRI grants
+    
+    # Stock and Flow Measures
+    "DT.DOD.DECT.CD", "DT.DOD.DECT.GN.ZS",
+    "DT.DOD.DSTC.ZS", "DT.NFL.DECT.CD"
+  )
+) |>
+  mutate(
+    event_type = case_when(
+      str_detect(series_id, "AXA|IXA") ~ "arrears",
+      str_detect(series_id, "AXR|IXR|TXR|DXR") ~ "rescheduling",
+      str_detect(series_id, "AXF|IXF|DFR|DSF|MDRI") ~ "forgiveness",
+      TRUE ~ "stock_flow"
+    ),
+    component = case_when(
+      str_detect(series_id, "^DT\\.AX") ~ "principal",
+      str_detect(series_id, "^DT\\.IX") ~ "interest",
+      TRUE ~ "combined"
+    ),
+    creditor = case_when(
+      str_detect(series_id, "OFFT") ~ "official",
+      str_detect(series_id, "PRVT") ~ "private",
+      TRUE ~ "all"
+    ),
+    measurement = case_when(
+      str_detect(series_id, "DOD") ~ "stock",
+      str_detect(series_id, "ZS$") ~ "ratio",
+      TRUE ~ "flow"
+    )
+  )
+
+# Now we can join this with the series metadata to get descriptions
+debt_series_full <- debt_series |>
+  left_join(
+    ids_list_series(),
+    by = "series_id"
+  ) |>
+  # Arrange in a logical order
+  arrange(event_type, component, creditor, measurement)
+
+debt_series_full
+```
+
+```{r}
+start_time <- Sys.time()
+
+
+bulk_files <- ids_bulk_files()
+
+# Function to safely process one bulk file
+process_bulk_file <- function(file_url) {
+  message("Processing ", basename(file_url))
+  
+  tryCatch({
+    # Read and immediately filter the bulk file
+    ids_bulk(
+      file_url,
+      warn_size = FALSE,
+      timeout = 240L
+      ) |>
+      # Keep only rows for our series of interest
+      filter(
+        series_id %in% debt_series$series_id,
+        year >= 2000,
+        year <= 2021
+      )
+  }, error = function(e) {
+    message("Error processing ", basename(file_url), ": ", e$message)
+    return(NULL)
+  })
+}
+
+# Process all files and combine
+debt_data <- bulk_files$file_url |>
+  map(process_bulk_file) |>
+  bind_rows()
+
+# Save the filtered data for future use
+write_rds(
+  debt_data,
+  here(
+    "data",
+    "ids_debt_distress_data.rds"
+  ),
+  compress = "gz"
+)
+
+end_time <- Sys.time()
+end_time - start_time
+```
+
+```{r}
+# Save the filtered data for future use
+write_csv(
+  debt_data,
+  here(
+    "data",
+    "ids_debt_distress_data.csv"
+  )
+)
+```
+
