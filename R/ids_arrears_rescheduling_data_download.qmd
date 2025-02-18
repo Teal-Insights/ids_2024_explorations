@@ -92,7 +92,7 @@ process_bulk_file <- function(file_url) {
       filter(
         series_id %in% debt_series$series_id,
         year >= 2000,
-        year <= 2021
+        year <= 2023
       )
   }, error = function(e) {
     message("Error processing ", basename(file_url), ": ", e$message)
@@ -130,3 +130,12 @@ write_csv(
 )
 ```
 
+```{r}
+write_csv(
+  debt_series_full,
+  here(
+    "data",
+    "ids_debt_distress_metadata.csv"
+  )
+)
+```
